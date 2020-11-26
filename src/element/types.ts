@@ -11,7 +11,7 @@ export type StrokeStyle = "solid" | "dashed" | "dotted";
 export type TextAlign = "left" | "center" | "right";
 export type VerticalAlign = "top" | "middle";
 
-type _ExcalidrawElementBase = Readonly<{
+export type _ExcalidrawElementBase = Readonly<{
   id: string;
   x: number;
   y: number;
