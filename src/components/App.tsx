@@ -180,24 +180,7 @@ import { Stats } from "./Stats";
 
 const { history } = createHistory();
 
-let didTapTwice: boolean = false;
-let tappedTwiceTimer = 0;
-let cursorX = 0;
-let cursorY = 0;
-let isHoldingSpace: boolean = false;
-let isPanning: boolean = false;
-let isDraggingScrollBar: boolean = false;
-let currentScrollBars: ScrollBars = { horizontal: null, vertical: null };
-let touchTimeout = 0;
 let invalidateContextMenu = false;
-
-let lastPointerUp: ((event: any) => void) | null = null;
-const gesture: Gesture = {
-  pointers: new Map(),
-  lastCenter: null,
-  initialDistance: null,
-  initialScale: null,
-};
 
 export type PointerDownState = Readonly<{
   // The first position at which pointerDown happened
@@ -271,6 +254,25 @@ export type ExcalidrawImperativeAPI = {
 };
 
 class App extends React.Component<ExcalidrawProps, AppState> {
+  public static didTapTwice: boolean = false;
+  public static tappedTwiceTimer: number = 0;
+  public static cursor: { x: number; y: number } = { x: 0, y: 0 };
+  public static isHoldingSpace: boolean = false;
+  public static isPanning: boolean = false;
+  public static isDraggingScrollBar: boolean = false;
+  public static touchTimeout: number = 0;
+  public static currentScrollBars: ScrollBars = {
+    horizontal: null,
+    vertical: null,
+  };
+  public static gesture: Gesture = {
+    pointers: new Map(),
+    lastCenter: null,
+    initialDistance: null,
+    initialScale: null,
+  };
+  public static lastPointerUp: ((event: any) => void) | null = null;
+
   canvas: HTMLCanvasElement | null = null;
   rc: RoughCanvas | null = null;
   unmounted: boolean = false;
@@ -481,7 +483,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
   // Lifecycle
 
   private onBlur = withBatchedUpdates(() => {
-    isHoldingSpace = false;
+    App.isHoldingSpace = false;
     this.setState({ isBindingEnabled: true });
   });
 
@@ -667,8 +669,8 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     this.unmounted = true;
     this.removeEventListeners();
     this.scene.destroy();
-    clearTimeout(touchTimeout);
-    touchTimeout = 0;
+    clearTimeout(App.touchTimeout);
+    App.touchTimeout = 0;
   }
 
   private onResize = withBatchedUpdates(() => {
@@ -862,7 +864,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
       },
     );
     if (scrollBars) {
-      currentScrollBars = scrollBars;
+      App.currentScrollBars = scrollBars;
     }
     const scrolledOutside =
       // hide when editing text
@@ -943,14 +945,14 @@ class App extends React.Component<ExcalidrawProps, AppState> {
   };
 
   private static resetTapTwice() {
-    didTapTwice = false;
+    this.didTapTwice = false;
   }
 
   private onTapStart = (event: TouchEvent) => {
-    if (!didTapTwice) {
-      didTapTwice = true;
-      clearTimeout(tappedTwiceTimer);
-      tappedTwiceTimer = window.setTimeout(
+    if (!App.didTapTwice) {
+      App.didTapTwice = true;
+      clearTimeout(App.tappedTwiceTimer);
+      App.tappedTwiceTimer = window.setTimeout(
         App.resetTapTwice,
         TAP_TWICE_TIMEOUT,
       );
@@ -958,15 +960,15 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     }
     // insert text only if we tapped twice with a single finger
     // event.touches.length === 1 will also prevent inserting text when user's zooming
-    if (didTapTwice && event.touches.length === 1) {
+    if (App.didTapTwice && event.touches.length === 1) {
       const [touch] = event.touches;
       // @ts-ignore
       this.handleCanvasDoubleClick({
         clientX: touch.clientX,
         clientY: touch.clientY,
       });
-      didTapTwice = false;
-      clearTimeout(tappedTwiceTimer);
+      App.didTapTwice = false;
+      clearTimeout(App.tappedTwiceTimer);
     }
     event.preventDefault();
     if (event.touches.length === 2) {
@@ -990,7 +992,10 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     async (event: ClipboardEvent | null) => {
       // #686
       const target = document.activeElement;
-      const elementUnderCursor = document.elementFromPoint(cursorX, cursorY);
+      const elementUnderCursor = document.elementFromPoint(
+        App.cursor.x,
+        App.cursor.y,
+      );
       if (
         // if no ClipboardEvent supplied, assume we're pasting via contextMenu
         // thus these checks don't make sense
@@ -1005,7 +1010,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
         this.setState({ errorMessage: data.errorMessage });
       } else if (data.spreadsheet) {
         this.addElementsFromPasteOrLibrary(
-          renderSpreadsheet(data.spreadsheet, cursorX, cursorY),
+          renderSpreadsheet(data.spreadsheet, App.cursor.x, App.cursor.y),
         );
       } else if (data.elements) {
         this.addElementsFromPasteOrLibrary(data.elements);
@@ -1019,8 +1024,8 @@ class App extends React.Component<ExcalidrawProps, AppState> {
 
   private addElementsFromPasteOrLibrary = (
     clipboardElements: readonly ExcalidrawElement[],
-    clientX = cursorX,
-    clientY = cursorY,
+    clientX = App.cursor.x,
+    clientY = App.cursor.y,
   ) => {
     const [minX, minY, maxX, maxY] = getCommonBounds(clipboardElements);
 
@@ -1082,7 +1087,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
 
   private addTextFromPaste(text: any) {
     const { x, y } = viewportCoordsToSceneCoords(
-      { clientX: cursorX, clientY: cursorY },
+      { clientX: App.cursor.x, clientY: App.cursor.y },
       this.state,
     );
 
@@ -1120,13 +1125,13 @@ class App extends React.Component<ExcalidrawProps, AppState> {
 
   removePointer = (event: React.PointerEvent<HTMLElement>) => {
     // remove touch handler for context menu on touch devices
-    if (event.pointerType === "touch" && touchTimeout) {
-      clearTimeout(touchTimeout);
-      touchTimeout = 0;
+    if (event.pointerType === "touch" && App.touchTimeout) {
+      clearTimeout(App.touchTimeout);
+      App.touchTimeout = 0;
       invalidateContextMenu = false;
     }
 
-    gesture.pointers.delete(event.pointerId);
+    App.gesture.pointers.delete(event.pointerId);
   };
 
   toggleLock = () => {
@@ -1199,8 +1204,8 @@ class App extends React.Component<ExcalidrawProps, AppState> {
 
   private updateCurrentCursorPosition = withBatchedUpdates(
     (event: MouseEvent) => {
-      cursorX = event.x;
-      cursorY = event.y;
+      App.cursor.x = event.x;
+      App.cursor.y = event.y;
     },
   );
 
@@ -1360,8 +1365,8 @@ class App extends React.Component<ExcalidrawProps, AppState> {
         this.toggleLock();
       }
     }
-    if (event.key === KEYS.SPACE && gesture.pointers.size === 0) {
-      isHoldingSpace = true;
+    if (event.key === KEYS.SPACE && App.gesture.pointers.size === 0) {
+      App.isHoldingSpace = true;
       document.documentElement.style.cursor = CURSOR_TYPE.GRABBING;
     }
   });
@@ -1378,7 +1383,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
           editingGroupId: null,
         });
       }
-      isHoldingSpace = false;
+      App.isHoldingSpace = false;
     }
     if (!event[KEYS.CTRL_OR_CMD] && !this.state.isBindingEnabled) {
       this.setState({ isBindingEnabled: true });
@@ -1396,7 +1401,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
   });
 
   private selectShapeTool(elementType: AppState["elementType"]) {
-    if (!isHoldingSpace) {
+    if (!App.isHoldingSpace) {
       setCursorForShape(elementType);
     }
     if (isToolIcon(document.activeElement)) {
@@ -1422,7 +1427,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     this.setState({
       selectedElementIds: {},
     });
-    gesture.initialScale = this.state.zoom.value;
+    App.gesture.initialScale = this.state.zoom.value;
   });
 
   private onGestureChange = withBatchedUpdates((event: GestureEvent) => {
@@ -1433,18 +1438,18 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     // zoom in at the right location on the touchMove handler already.
     // On Macbook, we don't have those events so will zoom in at the
     // current location instead.
-    if (gesture.pointers.size === 2) {
+    if (App.gesture.pointers.size === 2) {
       return;
     }
 
-    const initialScale = gesture.initialScale;
+    const initialScale = App.gesture.initialScale;
     if (initialScale) {
       this.setState(({ zoom, offsetLeft, offsetTop }) => ({
         zoom: getNewZoom(
           getNormalizedZoom(initialScale * event.scale),
           zoom,
           { left: offsetLeft, top: offsetTop },
-          { x: cursorX, y: cursorY },
+          { x: App.cursor.x, y: App.cursor.y },
         ),
       }));
     }
@@ -1456,7 +1461,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
       previousSelectedElementIds: {},
       selectedElementIds: this.state.previousSelectedElementIds,
     });
-    gesture.initialScale = null;
+    App.gesture.initialScale = null;
   });
 
   private handleTextWysiwyg(
@@ -1752,27 +1757,27 @@ class App extends React.Component<ExcalidrawProps, AppState> {
   ) => {
     this.savePointer(event.clientX, event.clientY, this.state.cursorButton);
 
-    if (gesture.pointers.has(event.pointerId)) {
-      gesture.pointers.set(event.pointerId, {
+    if (App.gesture.pointers.has(event.pointerId)) {
+      App.gesture.pointers.set(event.pointerId, {
         x: event.clientX,
         y: event.clientY,
       });
     }
 
-    const initialScale = gesture.initialScale;
+    const initialScale = App.gesture.initialScale;
     if (
-      gesture.pointers.size === 2 &&
-      gesture.lastCenter &&
+      App.gesture.pointers.size === 2 &&
+      App.gesture.lastCenter &&
       initialScale &&
-      gesture.initialDistance
+      App.gesture.initialDistance
     ) {
-      const center = getCenter(gesture.pointers);
-      const deltaX = center.x - gesture.lastCenter.x;
-      const deltaY = center.y - gesture.lastCenter.y;
-      gesture.lastCenter = center;
+      const center = getCenter(App.gesture.pointers);
+      const deltaX = center.x - App.gesture.lastCenter.x;
+      const deltaY = center.y - App.gesture.lastCenter.y;
+      App.gesture.lastCenter = center;
 
-      const distance = getDistance(Array.from(gesture.pointers.values()));
-      const scaleFactor = distance / gesture.initialDistance;
+      const distance = getDistance(Array.from(App.gesture.pointers.values()));
+      const scaleFactor = distance / App.gesture.initialDistance;
 
       this.setState(({ zoom, scrollX, scrollY, offsetLeft, offsetTop }) => ({
         scrollX: normalizeScroll(scrollX + deltaX / zoom.value),
@@ -1787,14 +1792,14 @@ class App extends React.Component<ExcalidrawProps, AppState> {
       }));
       this.resetShouldCacheIgnoreZoomDebounced();
     } else {
-      gesture.lastCenter = gesture.initialDistance = gesture.initialScale = null;
+      App.gesture.lastCenter = App.gesture.initialDistance = App.gesture.initialScale = null;
     }
 
-    if (isHoldingSpace || isPanning || isDraggingScrollBar) {
+    if (App.isHoldingSpace || App.isPanning || App.isDraggingScrollBar) {
       return;
     }
     const isPointerOverScrollBars = isOverScrollBars(
-      currentScrollBars,
+      App.currentScrollBars,
       event.clientX,
       event.clientY,
     );
@@ -1991,7 +1996,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     this.maybeOpenContextMenuAfterPointerDownOnTouchDevices(event);
     this.maybeCleanupAfterMissingPointerUp(event);
 
-    if (isPanning) {
+    if (App.isPanning) {
       return;
     }
 
@@ -2025,7 +2030,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     }
 
     // don't select while panning
-    if (gesture.pointers.size > 1) {
+    if (App.gesture.pointers.size > 1) {
       return;
     }
 
@@ -2075,7 +2080,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     const onKeyDown = this.onKeyDownFromPointerDownHandler(pointerDownState);
     const onKeyUp = this.onKeyUpFromPointerDownHandler(pointerDownState);
 
-    lastPointerUp = onPointerUp;
+    App.lastPointerUp = onPointerUp;
 
     window.addEventListener(EVENT.POINTER_MOVE, onPointerMove);
     window.addEventListener(EVENT.POINTER_UP, onPointerUp);
@@ -2094,7 +2099,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     if (event.pointerType === "touch") {
       invalidateContextMenu = false;
 
-      if (touchTimeout) {
+      if (App.touchTimeout) {
         // If there's already a touchTimeout, this means that there's another
         // touch down and we are doing another touch, so we shouldn't open the
         // context menu.
@@ -2102,8 +2107,8 @@ class App extends React.Component<ExcalidrawProps, AppState> {
       } else {
         // open the context menu with the first touch's clientX and clientY
         // if the touch is not moving
-        touchTimeout = window.setTimeout(() => {
-          touchTimeout = 0;
+        App.touchTimeout = window.setTimeout(() => {
+          App.touchTimeout = 0;
           if (!invalidateContextMenu) {
             this.openContextMenu({
               clientX: event.clientX,
@@ -2118,11 +2123,11 @@ class App extends React.Component<ExcalidrawProps, AppState> {
   private maybeCleanupAfterMissingPointerUp(
     event: React.PointerEvent<HTMLCanvasElement>,
   ): void {
-    if (lastPointerUp !== null) {
+    if (App.lastPointerUp !== null) {
       // Unfortunately, sometimes we don't get a pointerup after a pointerdown,
       // this can happen when a contextual menu or alert is triggered. In order to avoid
       // being in a weird state, we clean up on the next pointerdown
-      lastPointerUp(event);
+      App.lastPointerUp(event);
     }
   }
 
@@ -2132,14 +2137,14 @@ class App extends React.Component<ExcalidrawProps, AppState> {
   ): boolean => {
     if (
       !(
-        gesture.pointers.size === 0 &&
+        App.gesture.pointers.size === 0 &&
         (event.button === POINTER_BUTTON.WHEEL ||
-          (event.button === POINTER_BUTTON.MAIN && isHoldingSpace))
+          (event.button === POINTER_BUTTON.MAIN && App.isHoldingSpace))
       )
     ) {
       return false;
     }
-    isPanning = true;
+    App.isPanning = true;
 
     let nextPastePrevented = false;
     const isLinux = /Linux/.test(window.navigator.platform);
@@ -2196,10 +2201,10 @@ class App extends React.Component<ExcalidrawProps, AppState> {
       });
     });
     const teardown = withBatchedUpdates(
-      (lastPointerUp = () => {
-        lastPointerUp = null;
-        isPanning = false;
-        if (!isHoldingSpace) {
+      (App.lastPointerUp = () => {
+        App.lastPointerUp = null;
+        App.isPanning = false;
+        if (!App.isHoldingSpace) {
           setCursorForShape(this.state.elementType);
         }
         this.setState({
@@ -2222,16 +2227,16 @@ class App extends React.Component<ExcalidrawProps, AppState> {
   private updateGestureOnPointerDown(
     event: React.PointerEvent<HTMLCanvasElement>,
   ): void {
-    gesture.pointers.set(event.pointerId, {
+    App.gesture.pointers.set(event.pointerId, {
       x: event.clientX,
       y: event.clientY,
     });
 
-    if (gesture.pointers.size === 2) {
-      gesture.lastCenter = getCenter(gesture.pointers);
-      gesture.initialScale = this.state.zoom.value;
-      gesture.initialDistance = getDistance(
-        Array.from(gesture.pointers.values()),
+    if (App.gesture.pointers.size === 2) {
+      App.gesture.lastCenter = getCenter(App.gesture.pointers);
+      App.gesture.initialScale = this.state.zoom.value;
+      App.gesture.initialDistance = getDistance(
+        Array.from(App.gesture.pointers.values()),
       );
     }
   }
@@ -2252,7 +2257,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
         getGridPoint(origin.x, origin.y, this.state.gridSize),
       ),
       scrollbars: isOverScrollBars(
-        currentScrollBars,
+        App.currentScrollBars,
         event.clientX,
         event.clientY,
       ),
@@ -2302,7 +2307,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     ) {
       return false;
     }
-    isDraggingScrollBar = true;
+    App.isDraggingScrollBar = true;
     pointerDownState.lastCoords.x = event.clientX;
     pointerDownState.lastCoords.y = event.clientY;
     const onPointerMove = withBatchedUpdates((event: PointerEvent) => {
@@ -2315,9 +2320,9 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     });
 
     const onPointerUp = withBatchedUpdates(() => {
-      isDraggingScrollBar = false;
+      App.isDraggingScrollBar = false;
       setCursorForShape(this.state.elementType);
-      lastPointerUp = null;
+      App.lastPointerUp = null;
       this.setState({
         cursorButton: "up",
       });
@@ -2326,7 +2331,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
       window.removeEventListener(EVENT.POINTER_UP, onPointerUp);
     });
 
-    lastPointerUp = onPointerUp;
+    App.lastPointerUp = onPointerUp;
 
     window.addEventListener(EVENT.POINTER_MOVE, onPointerMove);
     window.addEventListener(EVENT.POINTER_UP, onPointerUp);
@@ -3074,7 +3079,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
         }
       }
 
-      lastPointerUp = null;
+      App.lastPointerUp = null;
 
       window.removeEventListener(
         EVENT.POINTER_MOVE,
@@ -3703,7 +3708,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
   private handleWheel = withBatchedUpdates((event: WheelEvent) => {
     event.preventDefault();
 
-    if (isPanning) {
+    if (App.isPanning) {
       return;
     }
 
@@ -3733,8 +3738,8 @@ class App extends React.Component<ExcalidrawProps, AppState> {
           zoom,
           { left: offsetLeft, top: offsetTop },
           {
-            x: cursorX,
-            y: cursorY,
+            x: App.cursor.x,
+            y: App.cursor.y,
           },
         ),
         selectedElementIds: {},
@@ -3814,7 +3819,7 @@ class App extends React.Component<ExcalidrawProps, AppState> {
     this.props.onPointerUpdate?.({
       pointer,
       button,
-      pointersMap: gesture.pointers,
+      pointersMap: App.gesture.pointers,
     });
   };
 
